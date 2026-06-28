@@ -491,6 +491,20 @@ impl CliProxy {
 mod tests {
     use super::*;
 
+    /// Create a CliProxy backed by a tempdir so parallel tests don't
+    /// contend for the shared ~/.sqz/sessions.db SQLite lock.
+    /// Returns the proxy and a TempDir that keeps the DB alive.
+    fn test_proxy() -> (CliProxy, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store_path = dir.path().join("test.db");
+        let engine = sqz_engine::SqzEngine::with_preset_and_store(
+            sqz_engine::preset::Preset::default(),
+            &store_path,
+        )
+        .expect("engine init");
+        (CliProxy::with_engine(engine), dir)
+    }
+
     #[test]
     fn test_is_known_command_git() {
         assert!(CliProxy::is_known_command("git"));
@@ -514,7 +528,7 @@ mod tests {
 
     #[test]
     fn test_intercept_output_returns_string() {
-        let proxy = CliProxy::new().expect("engine init");
+        let (proxy, _dir) = test_proxy();
         let output = "hello world\nsome output\n";
         let result = proxy.intercept_output("echo", output);
         // Result must be non-empty (either compressed or original fallback).
@@ -523,7 +537,7 @@ mod tests {
 
     #[test]
     fn test_intercept_output_fallback_on_empty() {
-        let proxy = CliProxy::new().expect("engine init");
+        let (proxy, _dir) = test_proxy();
         // Empty input should not panic and should return something.
         let result = proxy.intercept_output("git", "");
         // Empty input may compress to empty — just ensure no panic.
@@ -532,7 +546,7 @@ mod tests {
 
     #[test]
     fn test_dedup_cache_returns_ref_on_second_call() {
-        let proxy = CliProxy::new().expect("engine init");
+        let (proxy, _dir) = test_proxy();
         // Use unique content so this test doesn't depend on prior test state
         // in the shared ~/.sqz/sessions.db cache.
         let unique_tag = format!(
@@ -577,16 +591,7 @@ mod tests {
 
     #[test]
     fn test_file_tracking_on_cat() {
-        // Use a tempdir so this test doesn't contend with parallel tests
-        // for the shared ~/.sqz/sessions.db SQLite lock.
-        let dir = tempfile::tempdir().unwrap();
-        let store_path = dir.path().join("test.db");
-        let engine = sqz_engine::SqzEngine::with_preset_and_store(
-            sqz_engine::preset::Preset::default(),
-            &store_path,
-        )
-        .expect("engine init");
-        let proxy = CliProxy::with_engine(engine);
+        let (proxy, _dir) = test_proxy();
         let content = "use std::io;\nfn main() {}\n";
         proxy.intercept_output("cat src/main.rs", content);
         // File should be persisted in the session store
@@ -596,7 +601,7 @@ mod tests {
 
     #[test]
     fn test_context_refs_annotate_known_files() {
-        let proxy = CliProxy::new().expect("engine init");
+        let (proxy, _dir) = test_proxy();
         // Simulate reading a file (persists to session store)
         let _ = proxy.engine.session_store().add_known_file("src/auth.rs");
         // Error output referencing that file
@@ -607,7 +612,7 @@ mod tests {
 
     #[test]
     fn test_context_refs_no_annotation_for_unknown_files() {
-        let proxy = CliProxy::new().expect("engine init");
+        let (proxy, _dir) = test_proxy();
         let error = "error[E0308]: mismatched types\n --> src/unknown.rs:42:5\n";
         let result = proxy.apply_context_refs(error);
         assert!(!result.contains("[in context]"), "should not annotate unknown file");
@@ -642,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_reddit_packages_not_abbreviated() {
-        let proxy = CliProxy::new().expect("engine init");
+        let (proxy, _dir) = test_proxy();
         let output = "drwxr-xr-x  5 user user 4096 Apr 15 10:00 packages\n\
                       drwxr-xr-x  3 user user 4096 Apr 15 10:00 configuration\n\
                       drwxr-xr-x  2 user user 4096 Apr 15 10:00 documentation\n";
@@ -662,7 +667,7 @@ mod tests {
 
     #[test]
     fn test_paths_preserved_in_output() {
-        let proxy = CliProxy::new().expect("engine init");
+        let (proxy, _dir) = test_proxy();
         let output = "/etc/myapp/configuration/default.yml\n\
                       /usr/share/documentation/readme.md\n\
                       /home/user/.local/environment/config\n";
@@ -681,7 +686,7 @@ mod tests {
 
     #[test]
     fn test_git_urls_preserved() {
-        let proxy = CliProxy::new().expect("engine init");
+        let (proxy, _dir) = test_proxy();
         let output = "origin\thttps://github.com/example/repository.git (fetch)\n\
                       origin\thttps://github.com/example/repository.git (push)\n";
         let result = proxy.intercept_output("git remote -v", output);
@@ -695,7 +700,7 @@ mod tests {
 
     #[test]
     fn test_identifiers_preserved_in_code_output() {
-        let proxy = CliProxy::new().expect("engine init");
+        let (proxy, _dir) = test_proxy();
         let output = "error[E0433]: failed to resolve: use of undeclared crate or module `implementation`\n\
                       --> src/main.rs:5:5\n\
                       5 | use implementation::Config;\n";
@@ -713,7 +718,7 @@ mod tests {
         // Reddit repro end-to-end. When the output is new (cache miss), the
         // pipeline must preserve every filename. When it's a cache hit, the
         // §ref:...§ response is a correct compression.
-        let proxy = CliProxy::new().expect("engine init");
+        let (proxy, _dir) = test_proxy();
         let output = "total 24\n\
                       drwxr-xr-x  6 user user  192 Apr 18 10:00 packages\n\
                       drwxr-xr-x  3 user user   96 Apr 18 10:00 configuration\n\

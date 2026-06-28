@@ -784,12 +784,13 @@ mod tests {
     #[test]
     fn ref_refreshed_after_resend() {
         let (store, _dir) = in_memory_store();
-        // TTL of 10ms: a fresh send bumps accessed_at, so immediately after
-        // the re-send the ref is fresh again.
+        // TTL of 100ms: a fresh send bumps accessed_at, so immediately after
+        // the re-send the ref is fresh again. Use a generous margin to avoid
+        // timing flakes on Windows CI where clock granularity is coarser.
         let cm = CacheManager::with_ref_age_duration(
             store,
             u64::MAX,
-            Duration::from_millis(10),
+            Duration::from_millis(100),
         );
         let pipeline = make_pipeline();
         let content = b"hello world";
@@ -797,14 +798,14 @@ mod tests {
 
         cm.get_or_compress(path, content, &pipeline).unwrap();
         // Wait past the TTL so the entry is stale.
-        std::thread::sleep(std::time::Duration::from_millis(25));
+        std::thread::sleep(std::time::Duration::from_millis(300));
 
         // Stale — must re-send Fresh. The re-send bumps accessed_at.
         let result = cm.get_or_compress(path, content, &pipeline).unwrap();
         assert!(matches!(result, CacheResult::Fresh { .. }));
 
         // Immediately read again — the freshly-updated accessed_at is
-        // within the 10ms TTL, so the ref is fresh.
+        // within the 100ms TTL, so the ref is fresh.
         let result = cm.get_or_compress(path, content, &pipeline).unwrap();
         assert!(
             matches!(result, CacheResult::Dedup { .. }),
@@ -818,7 +819,7 @@ mod tests {
         let cm = CacheManager::with_ref_age_duration(
             store,
             u64::MAX,
-            Duration::from_millis(10),
+            Duration::from_millis(100),
         );
         let pipeline = make_pipeline();
         let content = b"test content";
@@ -830,7 +831,7 @@ mod tests {
         assert!(cm.check_dedup(content).unwrap().is_some());
 
         // Wait past TTL.
-        std::thread::sleep(std::time::Duration::from_millis(25));
+        std::thread::sleep(std::time::Duration::from_millis(300));
         assert!(
             cm.check_dedup(content).unwrap().is_none(),
             "stale ref should not be returned by check_dedup"

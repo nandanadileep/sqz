@@ -577,7 +577,16 @@ mod tests {
 
     #[test]
     fn test_file_tracking_on_cat() {
-        let proxy = CliProxy::new().expect("engine init");
+        // Use a tempdir so this test doesn't contend with parallel tests
+        // for the shared ~/.sqz/sessions.db SQLite lock.
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("test.db");
+        let engine = sqz_engine::SqzEngine::with_preset_and_store(
+            sqz_engine::preset::Preset::default(),
+            &store_path,
+        )
+        .expect("engine init");
+        let proxy = CliProxy::with_engine(engine);
         let content = "use std::io;\nfn main() {}\n";
         proxy.intercept_output("cat src/main.rs", content);
         // File should be persisted in the session store
